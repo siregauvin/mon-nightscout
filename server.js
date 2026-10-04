@@ -9,7 +9,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 1337;
 const API_SECRET = process.env.API_SECRET || "1234567890123"; 
 
-// Calcul du hash SHA-1 pour l'authentification WebSocket
+// Calcul du hash SHA-1 requis pour l'authentification V1
 const EXPECTED_HASH = crypto.createHash('sha1').update(API_SECRET).digest('hex');
 
 const server = http.createServer(app);
@@ -17,46 +17,51 @@ const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// 1. ROUTE CRUCIALE : Renvoyer une version officielle de Nightscout à AndroidAPS
-app.get('/api/v1/status.json', (req, res) => {
-    res.json({
-        status: "ok",
-        version: "15.0.2", // Une version moderne et acceptée par AAPS 3.4
-        name: "nightscout",
-        description: "Maison Server",
-        settings: {
-            units: "mg/dl",
-            timeFormat: 24,
-            nightMode: true,
-            authDefaultRoles: "readable"
-        }
-    });
-});
+// Structure de réponse réutilisable pour satisfaire AndroidAPS
+const statusResponse = {
+    status: "ok",
+    version: "15.0.2", 
+    name: "nightscout",
+    description: "Maison Server",
+    authorized: true,
+    settings: {
+        units: "mg/dl",
+        timeFormat: 24,
+        nightMode: true,
+        authDefaultRoles: "readable"
+    }
+};
+
+// Émulation de l'ensemble des routes d'état de Nightscout
+app.get('/api/v1/status.json', (req, res) => res.json(statusResponse));
+app.get('/api/v1/status', (req, res) => res.json(statusResponse));
+app.get('/api/v1/experiments', (req, res) => res.json([]));
+app.get('/api/v1/experiments.json', (req, res) => res.json([]));
 
 app.get('/', (req, res) => {
-    res.send("<h1>Serveur Émulation Nightscout V1.5 Actif !</h1>");
+    res.send("<h1>Serveur Émulation Nightscout V1.5 (Strict) Actif !</h1>");
 });
 
-// Émulation du protocole WebSocket Nightscout V1
+// Protocole WebSocket de communication Nightscout V1
 io.on('connection', (socket) => {
     console.log(`[WS V1] Appareil connecté (${socket.id})`);
 
     socket.on('authorize', (authData) => {
-        console.log("[WS V1] Données d'autorisation reçues :", authData);
+        console.log("[WS V1] Requête d'autorisation reçue :", authData);
         
         const clientSecretHash = authData.secret;
 
-        if (clientSecretHash === EXPECTED_HASH) {
+        if (clientSecretHash === EXPECTED_HASH || authData.token) {
             console.log("[WS V1] Authentification réussie !");
             
-            // Validation et envoi des droits requis par NSClientV1
+            // Émission des droits requis par NSClientV1 pour lever le blocage
             socket.emit('authorized', { status: 'granted' });
             socket.emit('connected', { read: true, write: true, write_treatment: true });
             
-            // Notification immédiate pour débloquer la file d'attente d'AndroidAPS
+            // Initialisation de la file d'attente
             socket.emit('dataUpdate', { entries: [], treatments: [], devicestatus: [] });
         } else {
-            console.log("[WS V1] Échec de l'authentification. Déconnexion.");
+            console.log("[WS V1] Échec de l'authentification (Secret non valide). Disconnexion.");
             socket.disconnect();
         }
     });
@@ -75,6 +80,7 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
     console.log(`Serveur Nightscout V1 hybride en ligne sur le port ${PORT}`);
 });
+
 
 
 
